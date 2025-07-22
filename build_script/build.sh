@@ -58,7 +58,7 @@ echogreen () {
 usage () {
   echo " "
   echored "USAGE:"
-  echogreen "bin=      (aria2, bash, bc, bc-gh, boringssl, brotli, bzip2, c-ares, coreutils, cpio, cunit, curl, diffutils, ed, exa, findutils, freedup, gawk, gdbm, \
+  echogreen "bin=      (aria2, bash, bc, bc-gh, boringssl, bpftool, brotli, bzip2, c-ares, coreutils, cpio, cunit, curl, diffutils, ed, exa, findutils, freedup, gawk, gdbm, \
   gmp, grep, gzip, htop, iftop, jq, ldns, libedit, libexpat, libhsts, libiconv, libidn2, libmagic, libnl, libpcap, libpcapnl (libpcap w/ libnl), libpsl, libssh2, libssh2-alt, \
   libunistring, nano, ncurses, ncursesw, nethogs, nghttp2 (lib only), nmap, openssl, patch, patchelf, pcre, pcre2, quiche, rclone, readline, rsync, sed, selinux, sqlite, \
   strace, tar, tcpdump, tinyalsa, vim, wavemon, wget2, zlib, zsh, zstd)"
@@ -117,6 +117,13 @@ setup_ohmyzsh() {
   sed -i -e "s|PATH=.*|PATH=\$PATH|" -e "s|ZSH=.*|ZSH=/system/etc/zsh/.oh-my-zsh|" -e "s|ARCHFLAGS=.*|ARCHFLAGS=\"-arch $arch\"|" $prefix/etc/zsh/.zshrc
 }
 build_bin() {
+  # Check if already built successfully
+  local build_marker="$dir/.build_success_$1"
+  if [ -f "$build_marker" ]; then
+    echo "$1 already built successfully! Skipping."
+    return 0
+  fi
+
   # Versioning and overrides
   local bin=$1 ext ver url name flags alt=false
   [ "$2" ] && local arch=$2
@@ -146,6 +153,7 @@ build_bin() {
     "bc-gh") ver="6.6.1"; url="https://github.com/gavinhoward/bc bc-gh";;
     "bzip2") ext=gz; ver="1.0.8"; url="https://www.sourceware.org/pub/bzip2/bzip2-$ver.tar.$ext";;
     "boringssl") ver="f1c75347d"; url="https://github.com/google/boringssl";; # Keep consistent with quiche boringssl
+    "bpftool") ver="main"; url="https://github.com/libbpf/bpftool";;
     "brotli") ver="v1.0.9"; url="https://github.com/google/brotli";;
     "c-ares") ver="cares-1_19_1"; url="https://github.com/c-ares/c-ares";;
     "coreutils") ext=xz; ver="9.3"; url="gnu"; [ $lapi -lt 28 ] && lapi=28;;
@@ -171,6 +179,12 @@ build_bin() {
     "libhsts") ver="libhsts-0.1.0"; url="https://gitlab.com/rockdaboot/libhsts";;
     "libiconv") ext=gz; ver="1.17"; url="gnu";;
     "libidn2") ext=gz; ver="2.3.4"; url="https://ftp.gnu.org/gnu/libidn/libidn2-$ver.tar.$ext"; $static && [ $lapi -lt 26 ] && lapi=26;;
+    "argp-standalone") ver="1.5.0"; url="https://android.googlesource.com/platform/external/argp-standalone";;
+    "libintl-lite") ver="main"; url="https://github.com/j-jorge/libintl-lite";;
+    "musl-obstack") ver="main"; url="https://github.com/void-linux/musl-obstack";;
+    "elfutils") ext=bz2; ver="latest"; url="https://sourceware.org/elfutils/ftp/elfutils-$ver.tar.$ext";;
+    "libcap") ext=xz; ver="2.69"; url="https://www.kernel.org/pub/linux/libs/security/linux-privs/libcap2/libcap-$ver.tar.$ext";;
+    "libbfd") ext=gz; ver="2.41"; url="https://ftp.gnu.org/gnu/binutils/binutils-$ver.tar.$ext";;
     "libmagic") ext=gz; ver="5.44"; url="ftp://ftp.astron.com/pub/file/file-$ver.tar.$ext";;
     "libnl") ext=gz; ver="3.2.25"; url="https://www.infradead.org/~tgr/libnl/files/libnl-$ver.tar.$ext"; [ $lapi -lt 26 ] && lapi=26;;
     "libpcap"|"libpcapnl") ver="1.10.3"; ver="a4ad1f2"; url="https://android.googlesource.com/platform/external/libpcap"; [ $lapi -lt 23 ] && lapi=23; [ "$bin" == "libpcapnl" ] && { bin=libpcap; alt=true; };;
@@ -235,9 +249,27 @@ build_bin() {
   if [ "$dir" == "$PWD" ]; then
     rm -rf $bin
     name="$(basename $(echo "$url" | sed "s|download||"))"
+    # Check if file exists and is valid (not corrupted)
+    if [ -f "$name" ]; then
+      # Test if the archive is valid
+      if ! tar -tf "$name" >/dev/null 2>&1; then
+        echo "Corrupted archive detected, re-downloading..."
+        rm -f "$name"
+      fi
+    fi
     [ -f "$name" ] || wget -O $name $url
-    tar -xf $name --transform s/$(echo $name | sed "s/.tar.$ext//")/$bin/
-    mv -f $bin-$ver $bin 2>/dev/null
+    # Special handling for elfutils-latest
+    if [ "$bin" = "elfutils" ] && [ "$ver" = "latest" ]; then
+      tar -xf $name
+      # Find the actual extracted directory and rename it
+      actual_dir=$(find . -maxdepth 1 -type d -name "elfutils-*" | head -1)
+      if [ -n "$actual_dir" ]; then
+        mv "$actual_dir" "$bin"
+      fi
+    else
+      tar -xf $name --transform s/$(echo $name | sed "s/.tar.$ext//")/$bin/
+      mv -f $bin-$ver $bin 2>/dev/null
+    fi
     cd $bin
   fi
 
@@ -253,8 +285,6 @@ build_bin() {
     local LDFLAGS='-s -pie'
     [ "$prefix" ] || local prefix=$dir/build-dynamic/$bin/$arch
   fi
-
-  $first && { [ -d "$prefix" ] && { echogreen "$bin already built! Skipping !"; return 0; }; } || first=false
 
   echogreen "Compiling $bin version $ver for $arch api $lapi"
   case $bin in
@@ -350,6 +380,113 @@ build_bin() {
         -DBUILD_SHARED_LIBS=0 \
         $flags-GNinja ..
       ninja
+      ;;
+    "argp-standalone")
+      cd $dir/$bin
+      autoreconf -fi
+      ./configure CFLAGS="$CFLAGS" LDFLAGS="$LDFLAGS" \
+        --host=$target_host --target=$target_host \
+        $flags--prefix=$prefix
+      ;;
+    "libintl-lite")
+      cd $dir/$bin/internal
+      $CXX $CXXFLAGS -O3 -c libintl.cpp -o libintl.o
+      $AR rs ../libintl.a libintl.o
+      # Always create shared version for elfutils compatibility
+      $CXX $CXXFLAGS -O3 -fPIC -shared libintl.cpp -o ../libintl.so.1
+      cd ../
+      ln -sf libintl.so.1 libintl.so
+      echo "Built shared libintl: $(ls -la libintl.so*)"
+      ;;
+    "musl-obstack")
+      cd $dir/$bin
+      autoreconf -fi
+      ./configure CFLAGS="$CFLAGS" LDFLAGS="$LDFLAGS" \
+        --host=$target_host --target=$target_host \
+        $flags--prefix=$prefix
+      ;;
+    "elfutils")
+      build_bin zstd
+      build_bin argp-standalone
+      build_bin libintl-lite
+      build_bin musl-obstack
+      cd $dir/$bin
+      # Remove -static flag from both CFLAGS and LDFLAGS for elfutils shared library builds
+      local elf_cflags=$(echo "$CFLAGS" | sed 's/ -static//g' | sed 's/-static //g' | sed 's/^-static$//')
+      elf_cflags="$elf_cflags -I$prefix/include"
+      elf_cflags="$elf_cflags -Dprogram_invocation_short_name=\\\"elfutils\\\""
+      elf_cflags="$elf_cflags -DFNM_EXTMATCH=0"
+      elf_cflags="$elf_cflags -Wno-strict-prototypes -Wno-format-security -Wno-format-nonliteral -Wno-format"
+      elf_cflags="$elf_cflags -Wno-incompatible-pointer-types-discards-qualifiers -Wno-unused-const-variable"
+      local elf_ldflags=$(echo "$LDFLAGS" | sed 's/ -static//g' | sed 's/-static //g' | sed 's/^-static$//')
+      elf_ldflags="$elf_ldflags -L$prefix/lib -lzstd -largp -lobstack -lintl -lc++"
+      ./configure CFLAGS="$elf_cflags" CXXFLAGS="$elf_cflags" LDFLAGS="$elf_ldflags" \
+        --host=$target_host --target=$target_host \
+        $flags--prefix=$prefix \
+        --disable-nls \
+        --disable-debuginfod \
+        --disable-libdebuginfod
+      ;;
+    "libcap")
+      cd $dir/$bin
+      # Create empty pthread library for Android NDK (same as aria2 case)
+      $AR cr $toolchain/../sysroot/usr/lib/$target_host/libpthread.a
+      # libcap uses simple make, no configure
+      # First build host tools needed for code generation
+      make -j$jobs -C libcap CC=gcc _makenames loader.txt
+      # Then build the actual library with cross compiler
+      make -j$jobs CC=$CC AR=$AR RANLIB=$RANLIB prefix=$prefix
+      ;;
+    "libbfd")
+      build_bin zstd
+      cd $dir/$bin
+      # binutils configure must be run from top level
+      $static && flags="--disable-shared --enable-static $flags"
+      ./configure CFLAGS="$CFLAGS -I$prefix/include" LDFLAGS="$LDFLAGS -L$prefix/lib -lz -lzstd -lintl -liberty" \
+        --host=$target_host --target=$target_host \
+        $flags--prefix=$prefix \
+        --enable-install-libiberty \
+        --disable-nls \
+        --disable-gdb \
+        --disable-sim \
+        --disable-gas \
+        --disable-ld \
+        --disable-gold \
+        --disable-gprof \
+        --disable-gprofng \
+        --enable-targets=$target_host \
+        --enable-64-bit-bfd \
+
+      # Build everything first to generate makefiles  
+      make -j$jobs
+      make install -j$jobs
+      ;;
+    "bpftool")
+      build_bin zstd
+      build_bin elfutils
+      build_bin zlib
+      build_bin libcap
+      build_bin libbfd
+      cd $dir/$bin
+      git submodule update --init
+      cd src
+      local extra_cflags="$CFLAGS -I$prefix/include -I$dir -include android_kernel_compat.h"
+      extra_cflags="$extra_cflags -Wno-unused-command-line-argument -Wno-unknown-warning-option"
+      local extra_ldflags="$LDFLAGS -L$prefix/lib -liberty -lz -lzstd -lintl -lstdc++ -lm"
+      # Now build bpftool with separate bootstrap and target configurations
+      make CC=$CC LD=$LD \
+        HOSTCC=gcc HOSTLD=ld \
+        HOST_LDFLAGS="" \
+        EXTRA_CFLAGS="$extra_cflags" \
+        EXTRA_LDFLAGS="$extra_ldflags" \
+        prefix=$prefix V=1
+      # Install with the same variables
+      make install CC=$CC LD=$LD \
+        HOSTCC=gcc HOSTLD=ld \
+        HOST_LDFLAGS="" \
+        EXTRA_CFLAGS="$extra_cflags" \
+        EXTRA_LDFLAGS="$extra_ldflags" \
+        DESTDIR="" prefix=$prefix bash_compdir=$prefix/share/bash-completion/completions V=1
       ;;
     "brotli")
       $static && flags="--disable-shared $flags"
@@ -1044,7 +1181,7 @@ build_bin() {
   esac
   [ $? -eq 0 ] || { echored "Configure failed!"; exit 1; }
 
-  if [ "$bin" != "exa" ] && [ "$bin" != "quiche" ]; then
+  if [ "$bin" != "exa" ] && [ "$bin" != "quiche" ] && [ "$bin" != "bpftool" ]; then
     case "$bin" in
       "bc-gh") make -j$jobs # Running just make install will error out
                [ $? -eq 0 ] || { echored "Build failed!"; exit 1; }
@@ -1054,6 +1191,28 @@ build_bin() {
                    cp -f ssl/libssl.a crypto/libcrypto.a decrepit/libdecrepit.a $prefix/lib/
                    cp -rf ../include $prefix/
                    ;;
+      "argp-standalone") make -j$jobs
+                        [ $? -eq 0 ] || { echored "Build failed!"; exit 1; }
+                        mkdir -p $prefix/lib $prefix/include
+                        cp -f libargp.a $prefix/lib/
+                        cp -f argp.h $prefix/include/
+                        ;;
+      "libintl-lite") mkdir -p $prefix/lib $prefix/include
+                      cd $dir/$bin
+                      cp -f libintl.a $prefix/lib/
+                      cp -f libintl.h $prefix/include/
+                      # Install shared library if it was built
+                      if [ -f libintl.so.1 ]; then
+                        cp -f libintl.so.1 $prefix/lib/
+                        ln -sf libintl.so.1 $prefix/lib/libintl.so
+                      fi
+                      ;;
+      "musl-obstack"|"elfutils") make install -j$jobs
+                [ $? -eq 0 ] || { echored "Build failed!"; exit 1; }
+                ;;
+      "libcap") make install -j$jobs prefix=$prefix DESTDIR= lib=lib
+                [ $? -eq 0 ] || { echored "Build failed!"; exit 1; }
+                ;;
       "c-ares") ninja install
                 $static || cp $prefix/lib/libcares_static.a $prefix/lib/libcares.a
                 ;;
@@ -1124,6 +1283,9 @@ build_bin() {
   fi
   $STRIP $prefix/*bin/* 2>/dev/null
   echogreen "$bin built sucessfully and can be found at: $prefix"
+  
+  # Mark build as successful
+  touch "$build_marker"
 }
 
 textreset=$(tput sgr0)
