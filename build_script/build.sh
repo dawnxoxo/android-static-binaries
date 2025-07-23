@@ -442,7 +442,7 @@ build_bin() {
       cd $dir/$bin
       # binutils configure must be run from top level
       $static && flags="--disable-shared --enable-static $flags"
-      ./configure CFLAGS="$CFLAGS -I$prefix/include" LDFLAGS="$LDFLAGS -L$prefix/lib -lz -lzstd -lintl -liberty" \
+      ./configure CFLAGS="$CFLAGS -I$prefix/include" LDFLAGS="$LDFLAGS -L$prefix/lib -lz -lzstd -lintl" \
         --host=$target_host --target=$target_host \
         $flags--prefix=$prefix \
         --enable-install-libiberty \
@@ -459,7 +459,6 @@ build_bin() {
 
       # Build everything first to generate makefiles  
       make -j$jobs
-      make install -j$jobs
       ;;
     "bpftool")
       build_bin zstd
