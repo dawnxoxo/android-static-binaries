@@ -439,7 +439,7 @@ build_bin() {
       ;;
     "libintl-lite")
       cd $dir/$bin/internal
-      $CXX $CXXFLAGS -O3 -c libintl.cpp -o libintl.o
+      $CXX $CXXFLAGS -static-libstdc++ -O3 -c libintl.cpp -o libintl.o
       $AR rs ../libintl.a libintl.o
       # Always create shared version for elfutils compatibility
       $CXX $CXXFLAGS -O3 -fPIC -shared libintl.cpp -o ../libintl.so.1
