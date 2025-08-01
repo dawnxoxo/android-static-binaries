@@ -70,6 +70,7 @@ usage () {
   echo "          Don't type this or set it to all to compile for all arches"
   echogreen "static=   (Default: true) (true, false)"
   echogreen "api=      (Default: 21 for dynamic, 33 for static) (21, 22, 23, 24, 26, 27, 28, 29, 30, 31, 32, 33)"
+  echogreen "sysroot=  (Default: false) (true, false) - Create sysroot.tgz from prefix directories after building"
   echo " "
   echored "Coreutils Specific Options:"
   echogreen "sep=      (Default: false) (true, false) - Determines if coreutils builds as a single busybox-like binary or as separate binaries"
@@ -115,6 +116,54 @@ setup_ohmyzsh() {
   git clone https://github.com/ohmyzsh/ohmyzsh.git $prefix/etc/zsh/.oh-my-zsh
   cp $prefix/etc/zsh/.oh-my-zsh/templates/zshrc.zsh-template $prefix/etc/zsh/.zshrc
   sed -i -e "s|PATH=.*|PATH=\$PATH|" -e "s|ZSH=.*|ZSH=/system/etc/zsh/.oh-my-zsh|" -e "s|ARCHFLAGS=.*|ARCHFLAGS=\"-arch $arch\"|" $prefix/etc/zsh/.zshrc
+}
+create_sysroot() {
+  echogreen "Creating sysroot from prefix directories..."
+  local sysroot_dir="$dir/sysroot"
+  local build_type
+  $static && build_type="static" || build_type="dynamic"
+  
+  # Remove old sysroot if exists
+  rm -rf "$sysroot_dir"
+  mkdir -p "$sysroot_dir"
+  
+  # Copy all architecture builds to sysroot
+  for larch in $arch; do
+    # Map architecture names to build directory names
+    local build_arch=$larch
+    case $larch in
+      arm64) build_arch=aarch64;;
+      arm) build_arch=arm;;
+      x64) build_arch=x86_64;;
+      x86) build_arch=i686;;
+    esac
+    
+    echogreen "Adding $larch to sysroot..."
+    mkdir -p "$sysroot_dir/$larch"
+    
+    # Copy from all built binaries for this architecture
+    for lbin in $bin; do
+      local arch_prefix="$dir/build-$build_type/$lbin/$build_arch"
+      if [ -d "$arch_prefix" ]; then
+        echogreen "  Adding $lbin/$build_arch..."
+        # Use rsync if available for better merging, otherwise cp
+        if command -v rsync >/dev/null 2>&1; then
+          rsync -a "$arch_prefix"/ "$sysroot_dir/$larch/" 2>/dev/null || true
+        else
+          cp -rf "$arch_prefix"/* "$sysroot_dir/$larch/" 2>/dev/null || true
+        fi
+      fi
+    done
+  done
+  
+  # Create the compressed sysroot
+  cd "$dir"
+  echogreen "Compressing sysroot to sysroot.tgz..."
+  tar -czf sysroot.tgz -C sysroot .
+  echogreen "Sysroot created: $dir/sysroot.tgz"
+  
+  # Clean up temporary sysroot directory
+  rm -rf "$sysroot_dir"
 }
 build_bin() {
   # Check if already built successfully
@@ -485,7 +534,15 @@ build_bin() {
         HOST_LDFLAGS="" \
         EXTRA_CFLAGS="$extra_cflags" \
         EXTRA_LDFLAGS="$extra_ldflags" \
-        DESTDIR="" prefix=$prefix bash_compdir=$prefix/share/bash-completion/completions V=1
+        DESTDIR="" prefix=$prefix bash_compdir=$prefix/share/bash-completion/completions
+      # Also install libbpf headers and library to prefix
+      cd ../libbpf/src
+      make install CC=$CC LD=$LD \
+        HOSTCC=gcc HOSTLD=ld \
+        HOST_LDFLAGS="" \
+        EXTRA_CFLAGS="$extra_cflags" \
+        EXTRA_LDFLAGS="$extra_ldflags" \
+        DESTDIR="$prefix"
       ;;
     "brotli")
       $static && flags="--disable-shared $flags"
@@ -1294,12 +1351,13 @@ dir=$PWD
 ndk=r25c #LTS
 static=true
 sep=false
+sysroot=false
 OIFS=$IFS; IFS=\|;
 while true; do
   case "${1,,}" in
     -h|--help) usage;;
     "") shift; break;;
-    api=*|static=*|bin=*|arch=*|sep=*) eval $(echo "${1,,}" | sed -e 's/=/="/' -e 's/$/"/' -e 's/,/ /g'); shift;;
+    api=*|static=*|bin=*|arch=*|sep=*|sysroot=*) eval $(echo "${1,,}" | sed -e 's/=/="/' -e 's/$/"/' -e 's/,/ /g'); shift;;
     *) echored "Invalid option: $1!"; usage;;
   esac
 done
@@ -1361,4 +1419,8 @@ for lbin in $bin; do
     build_bin $lbin $larch
   done
 done
+
+# Create sysroot if requested
+$sysroot && create_sysroot
+
 [ -d ~/.cargo ] && [ ! -f ~/.cargo/config.bak ] && cp -f ~/.cargo/config.bak ~/.cargo/config

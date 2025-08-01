@@ -6,6 +6,14 @@
 #define _LINUX_COMPILER_H_
 #endif
 
+/* Prevent kernel signal conflicts with bionic */
+#ifndef _LINUX_SIGNAL_H
+#define _LINUX_SIGNAL_H
+#endif
+#ifndef _ASM_GENERIC_SIGNAL_DEFS_H
+#define _ASM_GENERIC_SIGNAL_DEFS_H
+#endif
+
 /* Android NDK compatibility definitions for kernel macros */
 
 /* Compiler attributes */
@@ -51,8 +59,8 @@
 #endif
 
 /* Missing functions for Android */
-#ifndef qsort_r
 #include <stdlib.h>
+#if !defined(__GLIBC__) && !defined(qsort_r)
 static inline void qsort_r(void *base, size_t nmemb, size_t size,
                            int (*compar)(const void *, const void *, void *),
                            void *arg) {
